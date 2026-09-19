@@ -25,7 +25,10 @@ The deployed runtime and the fork's latest source may differ. Record the exact s
 SHA and immutable image digests for each deployed release. A source merge does not
 change running containers. For fork runtime patches, build all affected images from
 one reviewed commit and record their digests; never label an upstream binary as a
-custom build.
+custom build. For a narrow source overlay on a released image, verify the original
+file matches that release, copy only the reviewed changed file, and record both the
+base digest and patch commit. Do not imply the resulting image includes the entire
+newer fork.
 
 ## Release gate
 

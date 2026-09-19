@@ -32,4 +32,8 @@ At fork initialization, upstream baseline was
 `8ac53f7a523337266f5628406d30a23b71c2a2ff`. The first deployment candidate is upstream
 release `v0.1.12`, source `5a5cb51260b13000dda5d890d40c877c88d87555`, using its
 published immutable images. This difference is intentional and must remain visible
-in the private release lock. No application-code modifications are part of this setup.
+in the private release lock. The cancellation acceptance test found a provider interrupt
+acknowledgement that can remain pending after the terminal event. The fork now bounds
+that acknowledgement wait while still requiring actual turn completion. Preserve its
+regression tests during upstream merges; remove the patch only when upstream supplies
+and passes an equivalent fix.

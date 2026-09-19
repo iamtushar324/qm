@@ -1539,6 +1539,79 @@ test("a user stop whose interrupted turn reports status=failed is a clean stop, 
   );
 });
 
+for (const terminalDelayMs of [0, 6_500])
+  test(
+    `Codex finishes only after the terminal event (${terminalDelayMs}ms) when interrupt acknowledgement never arrives`,
+    { timeout: 12_000 },
+    async (t) => {
+      const dir = mkdtempSync(join(tmpdir(), "qm-codex-stop-no-ack-"));
+      const binary = stopReportsFailedCodexBinary(dir);
+      const source = readFileSync(binary, "utf8");
+      const acknowledged = 'if (msg.method === "turn/interrupt") {\n    send({ id: msg.id, result: {} });';
+      assert.ok(source.includes(acknowledged));
+      const terminal =
+        'return send({ method: "turn/completed", params: { threadId: "thread-sf", turn: { id: "turn-sf", status: "failed", error: { message: "turn interrupted" }, items: [] } } });';
+      assert.ok(source.includes(terminal));
+      writeFileSync(
+        binary,
+        source
+          .replace(acknowledged, 'if (msg.method === "turn/interrupt") {')
+          .replace(terminal, `return setTimeout(() => ${terminal.slice(7, -1)}, ${terminalDelayMs});`),
+      );
+      const signals = createMemoryRunSignalStore();
+      const harness = createCodexHarness({ binaryPath: binary, env: process.env, turnWallClockMs: 10_000, signals });
+      t.after(async () => {
+        await harness.turns.close?.();
+        rmSync(dir, { recursive: true, force: true });
+      });
+      const scope = "personal:tester" as ScopeId;
+      let recorded = false;
+      let stoppedEmitted = false;
+      let settled = false;
+      const running = harness.turns.runTurn({
+        session: { id: "stop-no-ack-session" } as Session,
+        input: "wait",
+        runId: "stop-no-ack-run",
+        systemPrompt: "QA",
+        history: [],
+        tools: {} as HarnessTurnInput["tools"],
+        scopeLabel: scope,
+        orgScopeId: scope,
+        emit: async (entry) => {
+          if (entry.type === "assistant" && (entry.payload as { stopped?: boolean })?.stopped) stoppedEmitted = true;
+          return { ...entry, sessionId: "stop-no-ack-session", seq: 1, createdAt: Date.now() } as SessionEntry;
+        },
+        recordModelCall: () => {},
+        recordLlmRequest: () => {
+          recorded = true;
+        },
+      });
+      void running.then(() => {
+        settled = true;
+      });
+      const deadline = Date.now() + 4_000;
+      while (!existsSync(join(dir, "started"))) {
+        if (Date.now() > deadline) throw new Error("mock Codex never started");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await signals.send("stop-no-ack-run", { kind: "abort" });
+      if (terminalDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, 5_500));
+        assert.equal(settled, false, "interrupt timeout must not complete a live turn");
+        assert.equal(stoppedEmitted, false, "interrupt timeout must not emit a stopped assistant");
+      }
+      const result = await running;
+      assert.equal(recorded, true);
+      assert.equal(stoppedEmitted, true);
+      assert.equal(result.stopped, true);
+      assert.equal(result.reply, "");
+      assert.deepEqual(
+        (await signals.pending("stop-no-ack-run")).map(({ signal }) => signal.kind),
+        ["abort"],
+      );
+    },
+  );
+
 test("Codex records one llm row per turn carrying real timings and usage, even when the turn fails", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "qm-codex-telemetry-test-"));
   const records: HarnessLlmRequestRecord[] = [];
